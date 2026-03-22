@@ -1,99 +1,58 @@
-import ast
+import os
 import re
-from pathlib import Path
-from typing import List, Dict, Set
+import subprocess
 
 class SecurityScanner:
-    def __init__(self):
-        self.vulnerability_patterns = {
-            'sql_injection': r'.*execute\(.*\%.*\)',
-            'command_injection': r'os\.system\(.*\)|subprocess\.run\(.*shell=True.*\)',
-            'hardcoded_secrets': r'password\s*=\s*[\'"].*[\'"]|api_key\s*=\s*[\'"].*[\'"]',
-            'unsafe_deserialization': r'pickle\.loads|yaml\.load\(',
-        }
+    def __init__(self, repo_path):
+        self.repo_path = repo_path
 
-    def scan_file(self, filepath: Path) -> Dict[str, List[int]]:
-        """Scan a single file for security vulnerabilities.
-
-        Args:
-            filepath: Path to the file to scan
-
-        Returns:
-            Dictionary mapping vulnerability types to line numbers
-        """
-        findings = {}
+    def scan_for_vulnerabilities(self):
+        """Scan the repository for known vulnerabilities and security issues."""
+        # Perform static code analysis
+        self.static_code_analysis()
         
-        with open(filepath, 'r') as f:
-            content = f.read()
-            lines = content.split('\n')
-            
-            for vuln_type, pattern in self.vulnerability_patterns.items():
-                matches = []
-                for i, line in enumerate(lines, 1):
-                    if re.search(pattern, line):
-                        matches.append(i)
-                if matches:
-                    findings[vuln_type] = matches
-
-        return findings
-
-    def scan_directory(self, directory: Path) -> Dict[str, Dict[str, List[int]]]:
-        """Recursively scan a directory for security vulnerabilities.
-
-        Args:
-            directory: Path to directory to scan
-
-        Returns:
-            Dictionary mapping filenames to their vulnerability findings
-        """
-        results = {}
+        # Check for known security vulnerabilities
+        self.check_for_vulnerabilities()
         
-        for filepath in directory.rglob('*.py'):
-            findings = self.scan_file(filepath)
-            if findings:
-                results[str(filepath)] = findings
-                
-        return results
+        # Scan for sensitive information leaks
+        self.scan_for_sensitive_data()
 
-    def generate_report(self, scan_results: Dict[str, Dict[str, List[int]]]) -> str:
-        """Generate a formatted report from scan results.
-
-        Args:
-            scan_results: Results from scan_directory()
-
-        Returns:
-            Formatted string report
-        """
-        report = ['Security Scan Results', '===================\n']
+    def static_code_analysis(self):
+        """Perform static code analysis using tools like bandit, flake8, and pylint."""
+        # Run bandit to check for security issues
+        subprocess.run(["bandit", "-r", self.repo_path], check=True)
         
-        if not scan_results:
-            report.append('No security vulnerabilities found.')
-            return '\n'.join(report)
-            
-        for filepath, findings in scan_results.items():
-            report.append(f'File: {filepath}')
-            for vuln_type, lines in findings.items():
-                report.append(f'  {vuln_type.replace("_", " ").title()}:')
-                report.append(f'    Lines: {", ".join(map(str, lines))}\n')
-                
-        return '\n'.join(report)
+        # Run flake8 to check for code style and quality issues
+        subprocess.run(["flake8", self.repo_path], check=True)
+        
+        # Run pylint to check for code quality and maintainability issues
+        subprocess.run(["pylint", self.repo_path], check=True)
 
-    def quick_scan(self, path: Path) -> str:
-        """Convenience method to scan and generate report in one step.
+    def check_for_vulnerabilities(self):
+        """Check the repository for known security vulnerabilities using tools like OWASP dependency check."""
+        # Run OWASP dependency check to scan for vulnerable dependencies
+        subprocess.run(["dependency-check", "--out", "dependency-check-report.xml", "--scan", self.repo_path], check=True)
+        
+        # Parse the dependency check report and report any found vulnerabilities
+        self.parse_dependency_check_report()
 
-        Args:
-            path: Path to file or directory to scan
-
-        Returns:
-            Formatted scan report
-        """
-        if path.is_file():
-            results = {str(path): self.scan_file(path)}
-        else:
-            results = self.scan_directory(path)
-            
-        return self.generate_report(results)
-
-if __name__ == '__main__':
-    scanner = SecurityScanner()
-    print(scanner.quick_scan(Path('.')))
+    def scan_for_sensitive_data(self):
+        """Scan the repository for sensitive information like API keys, passwords, and other credentials."""
+        # Define a list of patterns to search for sensitive information
+        sensitive_patterns = [
+            r"\b(password|secret|key|token)\s*[=:]+\s*['\"]([^'\"]+)['\"]\b",
+            r"\b(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)\s*[=:]+\s*['\"]([^'\"]+)['\"]\b",
+            r"\b(GITHUB_TOKEN|GITHUB_SECRET)\s*[=:]+\s*['\"]([^'\"]+)['\"]\b"
+        ]
+        
+        # Scan the repository for sensitive information
+        for root, dirs, files in os.walk(self.repo_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                with open(file_path, "r") as f:
+                    content = f.read()
+                    for pattern in sensitive_patterns:
+                        matches = re.findall(pattern, content)
+                        if matches:
+                            for match in matches:
+                                print(f"Potential sensitive information found in {file_path}: {match[1]}")
