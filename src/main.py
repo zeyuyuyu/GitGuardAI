@@ -1,35 +1,49 @@
-import os
-import git
-import torch
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
-from typing import List, Dict
+# src/main.py
+import asyncio
+import random
 
-class Guardian:
-    def __init__(self, repo_path: str):
-        self.repo_path = repo_path
-        self.repo = git.Repo(repo_path)
-        self.security_model = self._load_security_model()
-        self.workflow_model = self._load_workflow_model()
+class GovernanceProtocol:
+    def __init__(self, agents):
+        self.agents = agents
+        self.proposal_queue = []
+        self.vote_results = {}
 
-    def _load_security_model(self) -> AutoModelForSequenceClassification:
-        model_path = os.getenv('GITGUARD_SECURITY_MODEL', 'gitguard/security-v1')
-        return AutoModelForSequenceClassification.from_pretrained(model_path)
+    async def propose_action(self, agent, action):
+        self.proposal_queue.append((agent, action))
+        await self.initiate_vote()
 
-    def _load_workflow_model(self) -> AutoModelForSequenceClassification:
-        model_path = os.getenv('GITGUARD_WORKFLOW_MODEL', 'gitguard/workflow-v1')
-        return AutoModelForSequenceClassification.from_pretrained(model_path)
+    async def initiate_vote(self):
+        if len(self.proposal_queue) > 0:
+            proposal = self.proposal_queue.pop(0)
+            agent, action = proposal
+            self.vote_results = {agent: 0 for agent in self.agents}
+            await asyncio.gather(*[self.agent_vote(a, action) for a in self.agents])
+            if sum(self.vote_results.values()) >= len(self.agents) // 2 + 1:
+                print(f"Proposal accepted: {agent} wants to {action}")
+                await agent.execute_action(action)
+            else:
+                print(f"Proposal rejected: {agent} wanted to {action}")
 
-    def watch(self):
-        """Start monitoring git operations"""
-        self.repo.git.hooks_path = self._install_hooks()
-        print('GitGuardAI is now watching your repository')
+    async def agent_vote(self, agent, action):
+        vote = random.choice([True, False])
+        self.vote_results[agent] = 1 if vote else 0
+        print(f"{agent.name} voted {'yes' if vote else 'no'} on {action}")
 
-    def analyze_diff(self, diff: str) -> Dict[str, float]:
-        """Analyze git diff for security issues and workflow optimizations"""
-        security_score = self._analyze_security(diff)
-        workflow_score = self._analyze_workflow(diff)
-        
-        return {
-            'security_risk': security_score,
-            'workflow_efficiency': workflow_score
-        }
+class Agent:
+    def __init__(self, name):
+        self.name = name
+
+    async def execute_action(self, action):
+        print(f"{self.name} executing action: {action}")
+
+async def main():
+    agents = [Agent(f"Agent{i}") for i in range(5)]
+    protocol = GovernanceProtocol(agents)
+
+    await asyncio.gather(
+        *[protocol.propose_action(random.choice(agents), "move left"),
+          protocol.propose_action(random.choice(agents), "move right"),
+          protocol.propose_action(random.choice(agents), "attack")]
+    )
+
+asyncio.run(main())
