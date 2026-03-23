@@ -1,53 +1,37 @@
 import os
-import subprocess
-import re
+import requests
+import json
 
 class SecurityScanner:
-    def __init__(self, repo_path):
-        self.repo_path = repo_path
+    def __init__(self, repo_url):
+        self.repo_url = repo_url
 
-    def scan_for_vulnerabilities(self):
-        """Scans the repository for known security vulnerabilities."""
-        vulns = []
-
-        # Scan for vulnerable dependencies
-        deps = self._get_dependencies()
-        for dep in deps:
-            vulns.extend(self._check_dependency_vulnerabilities(dep))
-
-        # Scan for hardcoded secrets
-        vulns.extend(self._scan_for_hardcoded_secrets())
-
-        return vulns
-
-    def _get_dependencies(self):
-        """Retrieves the dependencies for the project."""
-        deps = []
-        # Implement logic to extract dependencies based on the project type (e.g., requirements.txt, package.json)
-        return deps
-
-    def _check_dependency_vulnerabilities(self, dependency):
-        """Checks a dependency for known vulnerabilities."""
-        vulns = []
-        # Implement logic to check the dependency against a vulnerability database (e.g., using an API like snyk.io)
-        return vulns
-
-    def _scan_for_hardcoded_secrets(self):
-        """Scans the repository for hardcoded secrets (e.g., API keys, passwords)."""
-        vulns = []
-        for root, dirs, files in os.walk(self.repo_path):
-            for file in files:
-                file_path = os.path.join(root, file)
-                with open(file_path, 'r') as f:
-                    content = f.read()
-                    if self._contains_secret(content):
-                        vulns.append({
-                            'file': file_path,
-                            'description': 'Potential hardcoded secret found.'
-                        })
-        return vulns
-
-    def _contains_secret(self, content):
-        """Checks if the given content contains a potential secret."""
-        # Implement logic to detect potential secrets based on patterns (e.g., regex)
-        return False
+    def scan_repository(self):
+        try:
+            # Fetch the Git repository
+            os.system(f'git clone {self.repo_url}')
+            repo_name = os.path.basename(self.repo_url.rstrip('/'))
+            
+            # Scan the repository for vulnerabilities
+            vulns = self._scan_for_vulnerabilities(repo_name)
+            
+            # Clean up the cloned repository
+            os.system(f'rm -rf {repo_name}')
+            
+            return vulns
+        except Exception as e:
+            print(f'Error scanning repository: {e}')
+            return []
+    
+    def _scan_for_vulnerabilities(self, repo_name):
+        # Use a vulnerability scanning service (e.g., Snyk, Dependabot, etc.)
+        url = f'https://api.vulnerabilityscanner.com/scan'
+        payload = {'repository': repo_name}
+        headers = {'Content-Type': 'application/json'}
+        
+        response = requests.post(url, data=json.dumps(payload), headers=headers)
+        
+        if response.status_code == 200:
+            return response.json()['vulnerabilities']
+        else:
+            return []
