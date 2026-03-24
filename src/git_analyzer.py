@@ -1,88 +1,130 @@
 import git
 import re
 from datetime import datetime, timezone
-from typing import List, Dict, Tuple
+from typing import Dict, List, Tuple
 
 class GitAnalyzer:
     def __init__(self, repo_path: str):
         self.repo = git.Repo(repo_path)
         self.risk_patterns = {
-            'api_key': r'(?i)(api[_-]key|apikey|secret[_-]key|token)',
-            'password': r'(?i)(password|passwd|pwd)',
-            'certificate': r'(?i)(-----BEGIN .*PRIVATE KEY-----|-----BEGIN CERTIFICATE-----)',
-            'ip_address': r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'
+            'high': [
+                r'password',
+                r'secret',
+                r'token',
+                r'api[_-]key',
+                r'credential'
+            ],
+            'medium': [
+                r'auth',
+                r'config',
+                r'private',
+                r'ssh'
+            ]
         }
 
-    def analyze_commit_patterns(self) -> List[Dict]:
-        suspicious_commits = []
-        for commit in self.repo.iter_commits():
-            risk_score = 0
-            findings = []
-            
-            # Analyze commit message
-            for pattern_name, pattern in self.risk_patterns.items():
-                if re.search(pattern, commit.message):
-                    risk_score += 5
-                    findings.append(f'Suspicious pattern {pattern_name} in commit message')
-
-            # Analyze diff content
-            if len(commit.parents) > 0:
-                diff = commit.parents[0].diff(commit, create_patch=True)
-                for d in diff:
-                    if hasattr(d, 'diff'):
-                        diff_text = d.diff.decode('utf-8', errors='ignore')
-                        for pattern_name, pattern in self.risk_patterns.items():
-                            matches = re.finditer(pattern, diff_text)
-                            for match in matches:
-                                risk_score += 8
-                                findings.append(f'Suspicious pattern {pattern_name} in file {d.a_path}')
-
-            # Analyze commit timing
-            commit_time = datetime.fromtimestamp(commit.committed_date, tz=timezone.utc)
-            if commit_time.hour < 5 or commit_time.hour > 22:  # Suspicious hours
-                risk_score += 3
-                findings.append('Commit made during suspicious hours')
-
-            if risk_score > 5:
-                suspicious_commits.append({
-                    'commit_hash': commit.hexsha,
-                    'author': commit.author.email,
-                    'date': commit_time.isoformat(),
-                    'risk_score': risk_score,
-                    'findings': findings
+    def analyze_commit_history(self) -> Dict:
+        commits = list(self.repo.iter_commits('master'))
+        analysis = {
+            'total_commits': len(commits),
+            'risk_score': 0,
+            'high_risk_commits': [],
+            'medium_risk_commits': [],
+            'commit_frequency': self._calculate_commit_frequency(commits),
+            'author_stats': self._get_author_statistics(commits)
+        }
+        
+        for commit in commits:
+            risk_level = self._assess_commit_risk(commit)
+            if risk_level == 'high':
+                analysis['risk_score'] += 10
+                analysis['high_risk_commits'].append({
+                    'hash': commit.hexsha,
+                    'message': commit.message,
+                    'author': commit.author.name,
+                    'date': commit.committed_datetime.isoformat()
                 })
+            elif risk_level == 'medium':
+                analysis['risk_score'] += 5
+                analysis['medium_risk_commits'].append({
+                    'hash': commit.hexsha,
+                    'message': commit.message,
+                    'author': commit.author.name,
+                    'date': commit.committed_datetime.isoformat()
+                })
+        
+        return analysis
 
-        return suspicious_commits
+    def _assess_commit_risk(self, commit) -> str:
+        message = commit.message.lower()
+        diffs = commit.diff(commit.parents[0] if commit.parents else git.NULL_TREE)
+        
+        # Check commit message and changes for risk patterns
+        for pattern in self.risk_patterns['high']:
+            if re.search(pattern, message) or any(
+                re.search(pattern, diff.diff.decode('utf-8', errors='ignore'))
+                for diff in diffs
+            ):
+                return 'high'
+        
+        for pattern in self.risk_patterns['medium']:
+            if re.search(pattern, message) or any(
+                re.search(pattern, diff.diff.decode('utf-8', errors='ignore'))
+                for diff in diffs
+            ):
+                return 'medium'
+        
+        return 'low'
 
-    def get_commit_velocity(self, days: int = 30) -> Dict:
-        current_time = datetime.now(timezone.utc)
-        commits = list(self.repo.iter_commits())
-        recent_commits = [c for c in commits if 
-            (current_time - datetime.fromtimestamp(c.committed_date, tz=timezone.utc)).days <= days]
+    def _calculate_commit_frequency(self, commits: List) -> Dict:
+        if not commits:
+            return {'commits_per_day': 0, 'days_since_last_commit': 0}
+        
+        first_commit = commits[-1]
+        last_commit = commits[0]
+        days_diff = (last_commit.committed_datetime - first_commit.committed_datetime).days
+        
+        if days_diff == 0:
+            commits_per_day = len(commits)
+        else:
+            commits_per_day = len(commits) / days_diff
+        
+        days_since_last = (datetime.now(timezone.utc) - last_commit.committed_datetime).days
         
         return {
-            'total_commits': len(recent_commits),
-            'commits_per_day': len(recent_commits) / days,
-            'unique_authors': len(set(c.author.email for c in recent_commits))
+            'commits_per_day': round(commits_per_day, 2),
+            'days_since_last_commit': days_since_last
         }
 
-    def find_large_changes(self, line_threshold: int = 100) -> List[Dict]:
-        large_commits = []
-        for commit in self.repo.iter_commits():
-            if len(commit.parents) > 0:
-                diff = commit.parents[0].diff(commit, create_patch=True)
-                lines_changed = sum(
-                    len(d.diff.decode('utf-8').split('\n')) 
-                    for d in diff 
-                    if hasattr(d, 'diff')
-                )
-                
-                if lines_changed > line_threshold:
-                    large_commits.append({
-                        'commit_hash': commit.hexsha,
-                        'author': commit.author.email,
-                        'date': datetime.fromtimestamp(commit.committed_date, tz=timezone.utc).isoformat(),
-                        'lines_changed': lines_changed
-                    })
+    def _get_author_statistics(self, commits: List) -> Dict:
+        authors = {}
+        for commit in commits:
+            author = commit.author.name
+            if author not in authors:
+                authors[author] = {
+                    'commit_count': 0,
+                    'first_commit': commit.committed_datetime,
+                    'last_commit': commit.committed_datetime
+                }
+            authors[author]['commit_count'] += 1
+            authors[author]['last_commit'] = max(
+                authors[author]['last_commit'],
+                commit.committed_datetime
+            )
+            authors[author]['first_commit'] = min(
+                authors[author]['first_commit'],
+                commit.committed_datetime
+            )
         
-        return large_commits
+        return authors
+
+    def get_large_files(self, size_threshold_mb: float = 100) -> List[Tuple[str, float]]:
+        large_files = []
+        for blob in self.repo.git.ls_files('-z').split('\0')[:-1]:
+            try:
+                size_mb = self.repo.git.cat_file('-s', blob).strip()
+                size_mb = float(size_mb) / (1024 * 1024)  # Convert to MB
+                if size_mb > size_threshold_mb:
+                    large_files.append((blob, size_mb))
+            except git.exc.GitCommandError:
+                continue
+        return sorted(large_files, key=lambda x: x[1], reverse=True)
